@@ -3,10 +3,11 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
 from datetime import datetime, timezone
 from pathlib import Path
 
-from score.cli import render_once, run_watch_loop
+from score.cli import list_events, render_once, run_watch_loop
 from score.events import Event, Team, find_events, format_event, parse_espn_event
 from score.espn import ESPNClient
 from score.storage import FollowStore
@@ -118,6 +119,17 @@ class CLITests(unittest.TestCase):
         self.assertEqual(title, "ARS 0–2 MCI · 73′")
         self.assertEqual(stream.value, osc_title(title))
 
+
+    def test_selector_shows_only_live_events_and_pins_exact_selection(self):
+        live = parse_espn_event(LIVE_EVENT)
+        upcoming = Event(**{**live.__dict__, "id": "pre", "state": "pre", "detail": "Scheduled"})
+        finished = Event(**{**live.__dict__, "id": "post", "state": "post", "detail": "FT"})
+        with patch("score.cli.discover", return_value=[upcoming, live, finished]), \
+             patch("score.cli.pin_event") as pin_event, \
+             patch("score.cli.sys.stdin.isatty", return_value=True), \
+             patch("builtins.input", return_value="1"):
+            list_events(pin_interactively=True)
+        pin_event.assert_called_once_with(live)
 
     def test_watch_loop_can_be_stopped_without_waiting_for_refresh_interval(self):
         class Client:

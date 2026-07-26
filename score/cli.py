@@ -119,10 +119,7 @@ def watch(event_id: str, tty: str, restore: str, interval: int = 20):
         stream.close()
 
 
-def pin(query: str, once=False):
-    client = ESPNClient()
-    matches = find_events(discover(client), query)
-    event = _choose(matches, "matching events")
+def pin_event(event, once=False):
     if once:
         print(format_event(event))
         return
@@ -139,6 +136,13 @@ def pin(query: str, once=False):
     )
     _write_state(tty, {"pid": process.pid, "event_id": event.id, "title": title, "restore": restore})
     print(f"Pinned {title}")
+
+
+def pin(query: str, once=False):
+    client = ESPNClient()
+    live = [event for event in discover(client) if event.state == "in"]
+    event = _choose(find_events(live, query), "matching live events")
+    pin_event(event, once)
 
 
 def unpin(quiet=False):
@@ -165,18 +169,14 @@ def unpin(quiet=False):
 
 
 def list_events(pin_interactively=False):
-    events = [event for event in discover(ESPNClient(), days=1) if event.state != "post"]
+    events = [event for event in discover(ESPNClient(), days=1) if event.state == "in"]
     if not events:
-        print("No live or upcoming football matches found.")
+        print("No live football matches found.")
         return
-    live = [event for event in events if event.state == "in"]
-    upcoming = [event for event in events if event.state == "pre"]
-    ordered = live + upcoming
     if pin_interactively and sys.stdin.isatty():
-        event = _choose(ordered, "live or upcoming events")
-        pin(f"{event.home.abbreviation} {event.away.abbreviation}")
+        pin_event(_choose(events, "live events"))
         return
-    for event in ordered:
+    for event in events:
         print(format_event(event))
 
 

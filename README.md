@@ -16,8 +16,8 @@ The first release targets football and Ghostty. Its event model and provider bou
 ## Commands
 
 ```bash
-score                         # browse live/upcoming matches; select one to pin
-score pin arsenal             # find and pin an Arsenal match
+score                         # browse live matches; select one to pin
+score pin arsenal             # find and pin a live Arsenal match
 score pin "arsenal city"      # narrow by both participants
 score pin arsenal --once      # print once; do not change the title
 score unpin                   # stop this tab's watcher and restore its title
