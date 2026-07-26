@@ -5,20 +5,33 @@ is kept here so it can be replaced without changing the CLI or title watcher.
 """
 
 import json
+import time
 import urllib.parse
 import urllib.request
+from urllib.error import HTTPError, URLError
 
 from .events import Team, parse_espn_event
 
 
 BASE = "https://site.api.espn.com/apis/site/v2/sports"
+CRICKET_PANEL = "https://site.web.api.espn.com/apis/site/v2/sports/cricket/scorepanel"
 SEARCH = "https://site.web.api.espn.com/apis/common/v3/search"
 
 
 def _get_json(url: str) -> dict:
-    request = urllib.request.Request(url, headers={"User-Agent": "score-cli/0.1"})
-    with urllib.request.urlopen(request, timeout=15) as response:
-        return json.load(response)
+    request = urllib.request.Request(url, headers={"User-Agent": "score/0.4"})
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(request, timeout=15) as response:
+                return json.loads(response.read())
+        except HTTPError as exc:
+            if exc.code not in {429, 500, 502, 503, 504} or attempt == 2:
+                raise
+        except URLError:
+            if attempt == 2:
+                raise
+        time.sleep(0.25 * (2 ** attempt))
+    raise RuntimeError("unreachable")
 
 
 class ESPNClient:
@@ -50,3 +63,29 @@ class ESPNClient:
             if item.get("type") == "team" and item.get("sport") == self.sport:
                 teams.append(Team(str(item["id"]), item["displayName"], item.get("abbreviation") or item["displayName"][:3].upper()))
         return teams
+
+
+class ESPNCricketClient(ESPNClient):
+    """Discover cricket across ESPN's dynamically changing series IDs."""
+
+    current_snapshot_only = True
+
+    def __init__(self, transport=None):
+        super().__init__(sport="cricket", league="", transport=transport)
+
+    def events(self, date: str) -> list:
+        params = {
+            "dates": date,
+            "contentorigin": "espn",
+            "lang": "en",
+            "region": "us",
+            "tz": "UTC",
+        }
+        data = self.transport(f"{CRICKET_PANEL}?{urllib.parse.urlencode(params)}")
+        events = []
+        for group in data.get("scores", []):
+            league = str((group.get("leagues") or [{}])[0].get("id", ""))
+            for raw in group.get("events", []):
+                enriched = {**raw, "leagueId": raw.get("leagueId") or league}
+                events.append(parse_espn_event(enriched, sport="cricket"))
+        return events

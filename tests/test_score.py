@@ -1,16 +1,18 @@
 import json
+import copy
 import inspect
 import tempfile
 import threading
 import time
 import unittest
+from urllib.error import HTTPError
 from unittest.mock import patch
 from datetime import date, datetime, timezone
 from pathlib import Path
 
-from score.cli import _dates, list_events, render_once, run_demo_loop, run_watch_loop, watch
+from score.cli import _dates, discover, discover_supported, list_events, pin_event, render_once, run_demo_loop, run_watch_loop, watch
 from score.events import Event, Team, find_events, format_event, parse_espn_event
-from score.espn import ESPNClient
+from score.espn import ESPNClient, ESPNCricketClient, _get_json
 from score.storage import FollowStore
 from score.title import osc_title
 
@@ -53,6 +55,31 @@ LIVE_MLB_EVENT = {
     }],
 }
 
+LIVE_CRICKET_EVENT = {
+    "id": "1538630",
+    "date": "2026-07-25T13:30Z",
+    "leagueId": "24436",
+    "status": {"type": {"state": "in", "description": "Stumps"}},
+    "competitions": [{
+        "status": {
+            "session": "Day 1",
+            "type": {"state": "in", "description": "Stumps", "shortDetail": "Live"},
+        },
+        "competitors": [
+            {
+                "homeAway": "home", "score": "194/3 (67 ov)",
+                "team": {"id": "4", "displayName": "West Indies", "abbreviation": "WI"},
+                "linescores": [{"isBatting": True, "isCurrent": 1}],
+            },
+            {
+                "homeAway": "away", "score": "",
+                "team": {"id": "7", "displayName": "Pakistan", "abbreviation": "PAK"},
+                "linescores": [{"isBatting": False, "isCurrent": 1}],
+            },
+        ],
+    }],
+}
+
 
 class EventTests(unittest.TestCase):
     def test_parses_and_formats_live_football_event(self):
@@ -69,6 +96,29 @@ class EventTests(unittest.TestCase):
         event = parse_espn_event(LIVE_MLB_EVENT, sport="baseball")
         event = Event(**{**event.__dict__, "state": "post", "detail": "Final"})
         self.assertEqual(format_event(event), "NYY 3–2 BOS · Final")
+
+    def test_parses_and_formats_live_cricket_batting_side_first(self):
+        event = parse_espn_event(LIVE_CRICKET_EVENT, sport="cricket")
+        self.assertEqual(event.league, "24436")
+        self.assertEqual(event.active_side, "home")
+        self.assertEqual(format_event(event), "WI 194/3 (67 ov) · PAK · Stumps")
+
+    def test_cricket_batting_team_id_places_away_batting_side_first(self):
+        raw = copy.deepcopy(LIVE_CRICKET_EVENT)
+        competition = raw["competitions"][0]
+        competition["status"]["battingTeamId"] = "7"
+        competition["competitors"][0]["score"] = "250"
+        competition["competitors"][1]["score"] = "120/3 (22 ov)"
+        for competitor in competition["competitors"]:
+            competitor["linescores"] = []
+        event = parse_espn_event(raw, sport="cricket")
+        self.assertEqual(event.active_side, "away")
+        self.assertEqual(format_event(event), "PAK 120/3 (22 ov) · WI 250 · Stumps")
+
+    def test_cricket_without_a_batting_side_keeps_home_team_first(self):
+        event = parse_espn_event(LIVE_CRICKET_EVENT, sport="cricket")
+        event = Event(**{**event.__dict__, "home_score": "", "away_score": "", "active_side": "", "detail": "Live"})
+        self.assertEqual(format_event(event), "WI · PAK · Live")
 
     def test_formats_full_time(self):
         event = parse_espn_event(LIVE_EVENT)
@@ -96,6 +146,18 @@ class EventTests(unittest.TestCase):
 
 
 class ESPNClientTests(unittest.TestCase):
+    def test_retries_transient_provider_failure(self):
+        class Response:
+            def __enter__(self): return self
+            def __exit__(self, *args): pass
+            def read(self): return b'{"events": []}'
+
+        transient = HTTPError("https://example.test", 502, "Bad Gateway", {}, None)
+        with patch("score.espn.urllib.request.urlopen", side_effect=[transient, Response()]) as urlopen, \
+             patch("score.espn.time", create=True):
+            self.assertEqual(_get_json("https://example.test"), {"events": []})
+        self.assertEqual(urlopen.call_count, 2)
+
     def test_discovers_events_from_scoreboard(self):
         requested = []
         def transport(url):
@@ -111,6 +173,25 @@ class ESPNClientTests(unittest.TestCase):
         events = client.events("20260726")
         self.assertIn("/sports/baseball/mlb/scoreboard", requested[0])
         self.assertEqual(events[0].sport, "baseball")
+
+    def test_discovers_all_series_cricket_events_with_dynamic_league(self):
+        requested = []
+        raw = {**LIVE_CRICKET_EVENT}
+        raw.pop("leagueId")
+        payload = {"scores": [{"leagues": [{"id": "24436"}], "events": [raw]}]}
+        client = ESPNCricketClient(transport=lambda url: requested.append(url) or payload)
+        events = client.events("20260726")
+        self.assertIn("/sports/cricket/scorepanel", requested[0])
+        self.assertIn("dates=20260726", requested[0])
+        self.assertEqual(events[0].league, "24436")
+        self.assertEqual(events[0].sport, "cricket")
+
+    def test_cricket_discovery_uses_one_current_scorepanel_request(self):
+        requested = []
+        payload = {"scores": [{"leagues": [{"id": "24436"}], "events": [LIVE_CRICKET_EVENT]}]}
+        client = ESPNCricketClient(transport=lambda url: requested.append(url) or payload)
+        discover(client, days=1)
+        self.assertEqual(len(requested), 1)
 
     def test_searches_for_stable_team_identity(self):
         def transport(url):
@@ -141,6 +222,34 @@ class TitleTests(unittest.TestCase):
 
 
 class CLITests(unittest.TestCase):
+    def test_one_provider_failure_does_not_hide_other_live_sports(self):
+        live = parse_espn_event(LIVE_EVENT)
+
+        class FailingClient:
+            current_snapshot_only = True
+            def events(self, date): raise OSError("provider unavailable")
+
+        class WorkingClient:
+            current_snapshot_only = True
+            def events(self, date): return [live]
+
+        with patch("score.cli.supported_clients", return_value=(FailingClient(), WorkingClient())):
+            self.assertEqual(discover_supported(days=1), [live])
+
+    def test_malformed_provider_does_not_hide_other_live_sports(self):
+        live = parse_espn_event(LIVE_EVENT)
+
+        class MalformedClient:
+            current_snapshot_only = True
+            def events(self, date): raise ValueError("malformed provider payload")
+
+        class WorkingClient:
+            current_snapshot_only = True
+            def events(self, date): return [live]
+
+        with patch("score.cli.supported_clients", return_value=(MalformedClient(), WorkingClient())):
+            self.assertEqual(discover_supported(days=1), [live])
+
     def test_discovery_dates_cover_late_games_across_utc_midnight(self):
         self.assertEqual(_dates(days=1, today=date(2026, 7, 26)), ["20260725", "20260726", "20260727"])
 
@@ -159,6 +268,24 @@ class CLITests(unittest.TestCase):
         self.assertEqual(title, "ARS 0–2 MCI · 73′")
         self.assertEqual(stream.value, osc_title(title))
 
+
+    def test_cricket_pin_preserves_series_for_exact_refresh(self):
+        class Process:
+            pid = 4321
+
+        class Stream:
+            def write(self, value): return len(value)
+            def flush(self): pass
+
+        event = parse_espn_event(LIVE_CRICKET_EVENT, sport="cricket")
+        with patch("score.cli._tty", return_value="/dev/pts/9"), \
+             patch("score.cli.unpin"), \
+             patch("score.cli.sys.stdout", Stream()), \
+             patch("score.cli.subprocess.Popen", return_value=Process()) as popen, \
+             patch("score.cli._write_state"):
+            pin_event(event)
+        command = popen.call_args.args[0]
+        self.assertEqual(command[4:8], [event.id, "cricket", "24436", "/dev/pts/9"])
 
     def test_real_watch_refresh_interval_is_ten_seconds(self):
         self.assertEqual(inspect.signature(watch).parameters["interval"].default, 10)

@@ -12,7 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from .espn import ESPNClient
+from .espn import ESPNClient, ESPNCricketClient
 from .events import find_events, format_event
 from .storage import FollowStore
 from .title import osc_title
@@ -42,7 +42,9 @@ def _dates(days=7, today=None):
 
 def discover(client, days=7):
     dates = _dates(days)
-    with ThreadPoolExecutor(max_workers=4) as pool:
+    if getattr(client, "current_snapshot_only", False):
+        dates = [datetime.now(timezone.utc).strftime("%Y%m%d")]
+    with ThreadPoolExecutor(max_workers=min(8, len(dates))) as pool:
         groups = list(pool.map(client.events, dates))
     unique = {}
     for event in (event for group in groups for event in group):
@@ -54,21 +56,35 @@ def supported_clients():
     return (
         ESPNClient(sport="soccer", league="all"),
         ESPNClient(sport="baseball", league="mlb"),
+        ESPNCricketClient(),
     )
 
 
-def client_for_sport(sport: str):
-    for client in supported_clients():
-        if client.sport == sport:
-            return client
-    raise ValueError(f"Unsupported sport: {sport}")
+def client_for_sport(sport: str, league: str = ""):
+    if sport == "soccer":
+        return ESPNClient(sport="soccer", league="all")
+    if sport == "baseball":
+        return ESPNClient(sport="baseball", league="mlb")
+    if sport == "cricket" and league:
+        return ESPNClient(sport="cricket", league=league)
+    raise ValueError(f"Unsupported sport or missing league: {sport}")
 
 
 def discover_supported(days=7):
     unique = {}
+    failures = []
+    succeeded = 0
     for client in supported_clients():
-        for event in discover(client, days):
+        try:
+            events = discover(client, days)
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            failures.append(exc)
+            continue
+        succeeded += 1
+        for event in events:
             unique[(event.sport, event.id)] = event
+    if not succeeded and failures:
+        raise failures[-1]
     return sorted(unique.values(), key=lambda event: event.start)
 
 
@@ -131,7 +147,7 @@ def run_watch_loop(client, event_id: str, stream, restore: str, interval: int, s
         _restore_title(stream, restore)
 
 
-def watch(event_id: str, sport: str, tty: str, restore: str, interval: int = 10):
+def watch(event_id: str, sport: str, league: str, tty: str, restore: str, interval: int = 10):
     state_path = _state_path(tty)
     stream = open(tty, "w", buffering=1)
     stop_event = threading.Event()
@@ -142,7 +158,7 @@ def watch(event_id: str, sport: str, tty: str, restore: str, interval: int = 10)
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
     try:
-        run_watch_loop(client_for_sport(sport), event_id, stream, restore, interval, stop_event)
+        run_watch_loop(client_for_sport(sport, league), event_id, stream, restore, interval, stop_event)
     finally:
         state_path.unlink(missing_ok=True)
         stream.close()
@@ -201,11 +217,11 @@ def pin_event(event, once=False):
     sys.stdout.flush()
     restore = Path.cwd().name or "Ghostty"
     process = subprocess.Popen(
-        [sys.executable, "-m", "score.cli", "_watch", event.id, event.sport, tty, restore],
+        [sys.executable, "-m", "score.cli", "_watch", event.id, event.sport, event.league, tty, restore],
         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         start_new_session=True,
     )
-    _write_state(tty, {"pid": process.pid, "event_id": event.id, "sport": event.sport, "title": title, "restore": restore})
+    _write_state(tty, {"pid": process.pid, "event_id": event.id, "sport": event.sport, "league": event.league, "title": title, "restore": restore})
     print(f"Pinned {title}")
 
 
@@ -241,7 +257,7 @@ def unpin(quiet=False):
 def list_events(pin_interactively=False):
     events = [event for event in discover_supported(days=1) if event.state == "in"]
     if not events:
-        print("No live football or MLB games found.")
+        print("No live football, MLB, or cricket events found.")
         return
     if pin_interactively and sys.stdin.isatty():
         pin_event(_choose(events, "live events"))
@@ -278,6 +294,7 @@ def parser():
     watch_parser = sub.add_parser("_watch")
     watch_parser.add_argument("event_id")
     watch_parser.add_argument("sport")
+    watch_parser.add_argument("league")
     watch_parser.add_argument("tty")
     watch_parser.add_argument("restore")
     demo_watch_parser = sub.add_parser("_demo_watch")
@@ -301,7 +318,7 @@ def main(argv=None):
     elif args.command == "following":
         following()
     elif args.command == "_watch":
-        watch(args.event_id, args.sport, args.tty, args.restore)
+        watch(args.event_id, args.sport, args.league, args.tty, args.restore)
     elif args.command == "_demo_watch":
         demo_watch(args.tty, args.restore)
 

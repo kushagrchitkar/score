@@ -5,6 +5,7 @@ Minimal live sports scores in your terminal title.
 ```text
 ARS 0–2 MCI · 73′
 NYY 3–2 BOS · Top 7th
+WI 194/3 (67 ov) · PAK · Stumps
 ```
 
 `score` is designed around two concepts:
@@ -12,7 +13,7 @@ NYY 3–2 BOS · Top 7th
 - **Follow** a team as a persistent preference.
 - **Pin** one event to one terminal tab until it finishes or you unpin it.
 
-The current release supports live football and MLB games in Ghostty. Its event model and provider boundary remain sport-neutral so more sports and data sources can be added later.
+The current release supports live football, MLB, and cricket events in Ghostty. Its event model and provider boundary remain sport-neutral so more sports and data sources can be added later.
 
 ## Commands
 
@@ -20,6 +21,7 @@ The current release supports live football and MLB games in Ghostty. Its event m
 score                         # browse live matches; select one to pin
 score pin arsenal             # find and pin a live Arsenal match
 score pin yankees             # find and pin a live Yankees game
+score pin india               # find and pin a live India cricket match
 score pin "arsenal city"      # narrow by both participants
 score pin arsenal --once      # print once; do not change the title
 score unpin                   # stop this tab's watcher and restore its title
@@ -74,8 +76,8 @@ python3 -m unittest discover -s tests -v
 
 ## Current scope
 
-- Football and MLB live-event discovery with fuzzy participant matching
-- Football minute/full-time and baseball inning/final compact formatting
+- Football, MLB, and all-series cricket live-event discovery with fuzzy participant matching
+- Football minute/full-time, baseball inning/final, and cricket runs/wickets/overs formatting
 - Stable team identities for follows
 - Per-terminal background pin watcher
 - Ghostty-compatible title output
