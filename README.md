@@ -4,6 +4,7 @@ Minimal live sports scores in your terminal title.
 
 ```text
 ARS 0–2 MCI · 73′
+NYY 3–2 BOS · Top 7th
 ```
 
 `score` is designed around two concepts:
@@ -11,13 +12,14 @@ ARS 0–2 MCI · 73′
 - **Follow** a team as a persistent preference.
 - **Pin** one event to one terminal tab until it finishes or you unpin it.
 
-The first release targets football and Ghostty. Its event model and provider boundary are sport-neutral so other sports and data sources can be added later.
+The current release supports live football and MLB games in Ghostty. Its event model and provider boundary remain sport-neutral so more sports and data sources can be added later.
 
 ## Commands
 
 ```bash
 score                         # browse live matches; select one to pin
 score pin arsenal             # find and pin a live Arsenal match
+score pin yankees             # find and pin a live Yankees game
 score pin "arsenal city"      # narrow by both participants
 score pin arsenal --once      # print once; do not change the title
 score unpin                   # stop this tab's watcher and restore its title
@@ -54,7 +56,7 @@ Ghostty must not have a permanently fixed `title = ...` configuration, because t
 
 1. The CLI discovers events using ESPN's public-facing scoreboard endpoints.
 2. A selected match is stored by stable provider event ID.
-3. A small watcher tied to the current TTY refreshes the exact event every 20 seconds.
+3. A small watcher tied to the current TTY refreshes the exact event every 10 seconds.
 4. The watcher writes a standard OSC title sequence supported by Ghostty.
 5. Closing the terminal makes title writes fail and the watcher exits; `score unpin` stops it explicitly.
 
@@ -72,8 +74,8 @@ python3 -m unittest discover -s tests -v
 
 ## Current scope
 
-- Football event discovery and fuzzy participant matching
-- Live, upcoming, and full-time compact formatting
+- Football and MLB live-event discovery with fuzzy participant matching
+- Football minute/full-time and baseball inning/final compact formatting
 - Stable team identities for follows
 - Per-terminal background pin watcher
 - Ghostty-compatible title output

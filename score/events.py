@@ -35,7 +35,10 @@ def parse_espn_event(data: dict, sport: str = "soccer") -> Event:
 
     status = competition.get("status") or data.get("status", {})
     status_type = status.get("type", {})
-    detail = status.get("displayClock") or status_type.get("shortDetail") or status_type.get("description", "")
+    if sport == "baseball":
+        detail = status_type.get("shortDetail") or status_type.get("description") or status.get("displayClock", "")
+    else:
+        detail = status.get("displayClock") or status_type.get("shortDetail") or status_type.get("description", "")
     start_date = data.get("date") or competition.get("date") or competition.get("startDate")
     if not start_date:
         raise ValueError("ESPN event has no start date")
@@ -57,11 +60,19 @@ def _minute(detail: str) -> str:
 
 
 def format_event(event: Event, tz=None) -> str:
+    if event.sport == "baseball":
+        first, second = event.away, event.home
+        first_score, second_score = event.away_score, event.home_score
+        final = "Final"
+    else:
+        first, second = event.home, event.away
+        first_score, second_score = event.home_score, event.away_score
+        final = "FT"
     if event.state == "pre":
         start = event.start.astimezone(tz) if tz else event.start.astimezone()
-        return f"{event.home.abbreviation} – {event.away.abbreviation} · {start:%H:%M}"
-    phase = "FT" if event.state == "post" else _minute(event.detail)
-    return f"{event.home.abbreviation} {event.home_score}–{event.away_score} {event.away.abbreviation} · {phase}"
+        return f"{first.abbreviation} – {second.abbreviation} · {start:%H:%M}"
+    phase = final if event.state == "post" else (_minute(event.detail) if event.sport == "soccer" else event.detail)
+    return f"{first.abbreviation} {first_score}–{second_score} {second.abbreviation} · {phase}"
 
 
 def find_events(events: Iterable[Event], query: str) -> list[Event]:

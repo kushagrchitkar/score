@@ -35,9 +35,9 @@ def render_once(client, event_id: str, stream) -> str:
     return title
 
 
-def _dates(days=7):
-    today = datetime.now(timezone.utc).date()
-    return [(today + timedelta(days=offset)).strftime("%Y%m%d") for offset in range(days + 1)]
+def _dates(days=7, today=None):
+    today = today or datetime.now(timezone.utc).date()
+    return [(today + timedelta(days=offset)).strftime("%Y%m%d") for offset in range(-1, days + 1)]
 
 
 def discover(client, days=7):
@@ -47,6 +47,28 @@ def discover(client, days=7):
     unique = {}
     for event in (event for group in groups for event in group):
         unique[event.id] = event
+    return sorted(unique.values(), key=lambda event: event.start)
+
+
+def supported_clients():
+    return (
+        ESPNClient(sport="soccer", league="all"),
+        ESPNClient(sport="baseball", league="mlb"),
+    )
+
+
+def client_for_sport(sport: str):
+    for client in supported_clients():
+        if client.sport == sport:
+            return client
+    raise ValueError(f"Unsupported sport: {sport}")
+
+
+def discover_supported(days=7):
+    unique = {}
+    for client in supported_clients():
+        for event in discover(client, days):
+            unique[(event.sport, event.id)] = event
     return sorted(unique.values(), key=lambda event: event.start)
 
 
@@ -109,7 +131,7 @@ def run_watch_loop(client, event_id: str, stream, restore: str, interval: int, s
         _restore_title(stream, restore)
 
 
-def watch(event_id: str, tty: str, restore: str, interval: int = 20):
+def watch(event_id: str, sport: str, tty: str, restore: str, interval: int = 10):
     state_path = _state_path(tty)
     stream = open(tty, "w", buffering=1)
     stop_event = threading.Event()
@@ -120,7 +142,7 @@ def watch(event_id: str, tty: str, restore: str, interval: int = 20):
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
     try:
-        run_watch_loop(ESPNClient(), event_id, stream, restore, interval, stop_event)
+        run_watch_loop(client_for_sport(sport), event_id, stream, restore, interval, stop_event)
     finally:
         state_path.unlink(missing_ok=True)
         stream.close()
@@ -179,17 +201,16 @@ def pin_event(event, once=False):
     sys.stdout.flush()
     restore = Path.cwd().name or "Ghostty"
     process = subprocess.Popen(
-        [sys.executable, "-m", "score.cli", "_watch", event.id, tty, restore],
+        [sys.executable, "-m", "score.cli", "_watch", event.id, event.sport, tty, restore],
         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         start_new_session=True,
     )
-    _write_state(tty, {"pid": process.pid, "event_id": event.id, "title": title, "restore": restore})
+    _write_state(tty, {"pid": process.pid, "event_id": event.id, "sport": event.sport, "title": title, "restore": restore})
     print(f"Pinned {title}")
 
 
 def pin(query: str, once=False):
-    client = ESPNClient()
-    live = [event for event in discover(client) if event.state == "in"]
+    live = [event for event in discover_supported() if event.state == "in"]
     event = _choose(find_events(live, query), "matching live events")
     pin_event(event, once)
 
@@ -218,9 +239,9 @@ def unpin(quiet=False):
 
 
 def list_events(pin_interactively=False):
-    events = [event for event in discover(ESPNClient(), days=1) if event.state == "in"]
+    events = [event for event in discover_supported(days=1) if event.state == "in"]
     if not events:
-        print("No live football matches found.")
+        print("No live football or MLB games found.")
         return
     if pin_interactively and sys.stdin.isatty():
         pin_event(_choose(events, "live events"))
@@ -256,6 +277,7 @@ def parser():
     sub.add_parser("following", help="list followed teams")
     watch_parser = sub.add_parser("_watch")
     watch_parser.add_argument("event_id")
+    watch_parser.add_argument("sport")
     watch_parser.add_argument("tty")
     watch_parser.add_argument("restore")
     demo_watch_parser = sub.add_parser("_demo_watch")
@@ -279,7 +301,7 @@ def main(argv=None):
     elif args.command == "following":
         following()
     elif args.command == "_watch":
-        watch(args.event_id, args.tty, args.restore)
+        watch(args.event_id, args.sport, args.tty, args.restore)
     elif args.command == "_demo_watch":
         demo_watch(args.tty, args.restore)
 

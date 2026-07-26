@@ -11,8 +11,7 @@ import urllib.request
 from .events import Team, parse_espn_event
 
 
-SCOREBOARD = "https://site.api.espn.com/apis/site/v2/sports/soccer/all/scoreboard"
-SUMMARY = "https://site.api.espn.com/apis/site/v2/sports/soccer/all/summary"
+BASE = "https://site.api.espn.com/apis/site/v2/sports"
 SEARCH = "https://site.web.api.espn.com/apis/common/v3/search"
 
 
@@ -23,25 +22,31 @@ def _get_json(url: str) -> dict:
 
 
 class ESPNClient:
-    def __init__(self, transport=None):
+    def __init__(self, sport="soccer", league="all", transport=None):
+        self.sport = sport
+        self.league = league
         self.transport = transport or _get_json
 
+    @property
+    def base_url(self):
+        return f"{BASE}/{self.sport}/{self.league}"
+
     def events(self, date: str) -> list:
-        url = f"{SCOREBOARD}?{urllib.parse.urlencode({'dates': date, 'limit': 1000})}"
-        return [parse_espn_event(item) for item in self.transport(url).get("events", [])]
+        url = f"{self.base_url}/scoreboard?{urllib.parse.urlencode({'dates': date, 'limit': 1000})}"
+        return [parse_espn_event(item, sport=self.sport) for item in self.transport(url).get("events", [])]
 
     def event(self, event_id: str):
-        url = f"{SUMMARY}?{urllib.parse.urlencode({'event': event_id})}"
+        url = f"{self.base_url}/summary?{urllib.parse.urlencode({'event': event_id})}"
         data = self.transport(url)
         if not data.get("header"):
             raise LookupError(f"Event {event_id} was not found")
-        return parse_espn_event(data["header"])
+        return parse_espn_event(data["header"], sport=self.sport)
 
     def search_teams(self, query: str) -> list[Team]:
-        params = {"query": query, "limit": 20, "type": "team", "sport": "soccer"}
+        params = {"query": query, "limit": 20, "type": "team", "sport": self.sport}
         data = self.transport(f"{SEARCH}?{urllib.parse.urlencode(params)}")
         teams = []
         for item in data.get("items", []):
-            if item.get("type") == "team" and item.get("sport") == "soccer":
+            if item.get("type") == "team" and item.get("sport") == self.sport:
                 teams.append(Team(str(item["id"]), item["displayName"], item.get("abbreviation") or item["displayName"][:3].upper()))
         return teams

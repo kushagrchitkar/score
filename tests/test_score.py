@@ -1,13 +1,14 @@
 import json
+import inspect
 import tempfile
 import threading
 import time
 import unittest
 from unittest.mock import patch
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
-from score.cli import list_events, render_once, run_demo_loop, run_watch_loop
+from score.cli import _dates, list_events, render_once, run_demo_loop, run_watch_loop, watch
 from score.events import Event, Team, find_events, format_event, parse_espn_event
 from score.espn import ESPNClient
 from score.storage import FollowStore
@@ -33,12 +34,41 @@ LIVE_EVENT = {
     }],
 }
 
+LIVE_MLB_EVENT = {
+    "id": "mlb-123",
+    "date": "2026-07-26T23:00Z",
+    "status": {
+        "displayClock": "0:00", "period": 7,
+        "type": {"state": "in", "completed": False, "shortDetail": "Top 7th"},
+    },
+    "competitions": [{
+        "status": {
+            "displayClock": "0:00", "period": 7,
+            "type": {"state": "in", "completed": False, "shortDetail": "Top 7th"},
+        },
+        "competitors": [
+            {"homeAway": "home", "score": "2", "team": {"id": "2", "displayName": "Boston Red Sox", "abbreviation": "BOS"}},
+            {"homeAway": "away", "score": "3", "team": {"id": "10", "displayName": "New York Yankees", "abbreviation": "NYY"}},
+        ],
+    }],
+}
+
 
 class EventTests(unittest.TestCase):
     def test_parses_and_formats_live_football_event(self):
         event = parse_espn_event(LIVE_EVENT)
         self.assertEqual(event.id, "123")
         self.assertEqual(format_event(event), "ARS 0–2 MCI · 73′")
+
+    def test_parses_and_formats_live_baseball_away_team_first(self):
+        event = parse_espn_event(LIVE_MLB_EVENT, sport="baseball")
+        self.assertEqual(event.sport, "baseball")
+        self.assertEqual(format_event(event), "NYY 3–2 BOS · Top 7th")
+
+    def test_formats_final_baseball_game(self):
+        event = parse_espn_event(LIVE_MLB_EVENT, sport="baseball")
+        event = Event(**{**event.__dict__, "state": "post", "detail": "Final"})
+        self.assertEqual(format_event(event), "NYY 3–2 BOS · Final")
 
     def test_formats_full_time(self):
         event = parse_espn_event(LIVE_EVENT)
@@ -75,6 +105,13 @@ class ESPNClientTests(unittest.TestCase):
         self.assertEqual([event.id for event in events], ["123"])
         self.assertIn("dates=20260725", requested[0])
 
+    def test_uses_sport_specific_scoreboard(self):
+        requested = []
+        client = ESPNClient(sport="baseball", league="mlb", transport=lambda url: requested.append(url) or {"events": [LIVE_MLB_EVENT]})
+        events = client.events("20260726")
+        self.assertIn("/sports/baseball/mlb/scoreboard", requested[0])
+        self.assertEqual(events[0].sport, "baseball")
+
     def test_searches_for_stable_team_identity(self):
         def transport(url):
             return {"items": [{
@@ -104,6 +141,9 @@ class TitleTests(unittest.TestCase):
 
 
 class CLITests(unittest.TestCase):
+    def test_discovery_dates_cover_late_games_across_utc_midnight(self):
+        self.assertEqual(_dates(days=1, today=date(2026, 7, 26)), ["20260725", "20260726", "20260727"])
+
     def test_render_once_writes_formatted_event_as_title(self):
         class Client:
             def event(self, event_id):
@@ -119,6 +159,9 @@ class CLITests(unittest.TestCase):
         self.assertEqual(title, "ARS 0–2 MCI · 73′")
         self.assertEqual(stream.value, osc_title(title))
 
+
+    def test_real_watch_refresh_interval_is_ten_seconds(self):
+        self.assertEqual(inspect.signature(watch).parameters["interval"].default, 10)
 
     def test_demo_writes_sequence_and_restores_title(self):
         class Stream:
@@ -145,7 +188,7 @@ class CLITests(unittest.TestCase):
         live = parse_espn_event(LIVE_EVENT)
         upcoming = Event(**{**live.__dict__, "id": "pre", "state": "pre", "detail": "Scheduled"})
         finished = Event(**{**live.__dict__, "id": "post", "state": "post", "detail": "FT"})
-        with patch("score.cli.discover", return_value=[upcoming, live, finished]), \
+        with patch("score.cli.discover_supported", return_value=[upcoming, live, finished]), \
              patch("score.cli.pin_event") as pin_event, \
              patch("score.cli.sys.stdin.isatty", return_value=True), \
              patch("builtins.input", return_value="1"):
