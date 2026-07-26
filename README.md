@@ -1,6 +1,6 @@
 # score
 
-Minimal live sports scores in your terminal title.
+Minimal live sports scores in your terminal title or beside an OpenPets companion.
 
 ```text
 ARS 0–2 MCI · 73′
@@ -26,6 +26,9 @@ score pin "arsenal city"      # narrow by both participants
 score pin arsenal --once      # print once; do not change the title
 score unpin                   # stop this tab's watcher and restore its title
 score demo                    # simulate a match in the title
+score openpets arsenal        # pin a live score to one OpenPets bubble
+score openpets                # browse all live events for OpenPets
+score openpets unpin          # stop and clear the OpenPets score bubble
 score follow arsenal          # save a team preference
 score following               # list followed teams
 ```
@@ -40,10 +43,29 @@ score demo
 
 The demo uses the same per-terminal background title mechanism as a real pin. It advances a simulated Arsenal–Manchester City match every two seconds, shows full time, and restores the previous title. Stop it early with `score unpin`.
 
-## Install from source
+## OpenPets
 
-Requires Python 3.9 or later and no runtime dependencies.
+[`OpenPets`](https://github.com/alterhq/openpets/releases/latest) is an optional native macOS companion app (macOS 14+). Install and open the official app, wake a pet, then run:
 
+```bash
+score openpets arsenal
+```
+
+`score` connects directly to OpenPets' configured local Unix socket; its separate CLI is not required. The first update creates one bubble and every later 10-second refresh replaces that same bubble by thread ID. The watcher retains the last valid score through transient provider failures, shows a final result for ten minutes, then clears it. It continues after the invoking terminal closes, but does not resume automatically after a Mac restart.
+
+Use `score openpets unpin` to stop the global watcher and clear only its score bubble. Ghostty title pins remain independent and per tab.
+
+## Install
+
+Requires Python 3.9 or later and no runtime dependencies. Install directly with `uv`:
+
+```bash
+uv tool install git+https://github.com/kushagrchitkar/score.git
+```
+
+Upgrade an existing installation with `uv tool upgrade ghostty-score`.
+
+To install from a checkout instead:
 ```bash
 git clone https://github.com/kushagrchitkar/score.git
 cd score
@@ -58,9 +80,9 @@ Ghostty must not have a permanently fixed `title = ...` configuration, because t
 
 1. The CLI discovers events using ESPN's public-facing scoreboard endpoints.
 2. A selected match is stored by stable provider event ID.
-3. A small watcher tied to the current TTY refreshes the exact event every 10 seconds.
-4. The watcher writes a standard OSC title sequence supported by Ghostty.
-5. Closing the terminal makes title writes fail and the watcher exits; `score unpin` stops it explicitly.
+3. A small watcher refreshes the exact event every 10 seconds.
+4. Ghostty pins write standard OSC title sequences to one TTY; OpenPets pins update one local bubble by stable thread ID.
+5. `score unpin` restores one terminal title, while `score openpets unpin` clears only the global pet bubble.
 
 No score data passes through a `score` server.
 
@@ -79,7 +101,8 @@ python3 -m unittest discover -s tests -v
 - Football, MLB, and all-series cricket live-event discovery with fuzzy participant matching
 - Football minute/full-time, baseball inning/final, and cricket runs/wickets/overs formatting
 - Stable team identities for follows
-- Per-terminal background pin watcher
+- Per-terminal Ghostty title pins and one global OpenPets bubble pin
+- Direct, local OpenPets socket integration with stable bubble thread identity
 - Ghostty-compatible title output
 
 Following currently persists team identity and is the foundation for preferred ordering; prioritizing followed teams in the interactive event list is the next small product slice.

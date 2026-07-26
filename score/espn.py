@@ -19,7 +19,7 @@ SEARCH = "https://site.web.api.espn.com/apis/common/v3/search"
 
 
 def _get_json(url: str) -> dict:
-    request = urllib.request.Request(url, headers={"User-Agent": "score/0.4"})
+    request = urllib.request.Request(url, headers={"User-Agent": "score/0.5"})
     for attempt in range(3):
         try:
             with urllib.request.urlopen(request, timeout=15) as response:
