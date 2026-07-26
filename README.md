@@ -21,11 +21,20 @@ score pin arsenal             # find and pin a live Arsenal match
 score pin "arsenal city"      # narrow by both participants
 score pin arsenal --once      # print once; do not change the title
 score unpin                   # stop this tab's watcher and restore its title
+score demo                    # simulate a match in the title
 score follow arsenal          # save a team preference
 score following               # list followed teams
 ```
 
 One Ghostty tab has one independent pin. Different tabs can pin different events.
+
+### Try it without a live match
+
+```bash
+score demo
+```
+
+The demo uses the same per-terminal background title mechanism as a real pin. It advances a simulated Arsenal–Manchester City match every two seconds, shows full time, and restores the previous title. Stop it early with `score unpin`.
 
 ## Install from source
 

@@ -7,7 +7,7 @@ from unittest.mock import patch
 from datetime import datetime, timezone
 from pathlib import Path
 
-from score.cli import list_events, render_once, run_watch_loop
+from score.cli import list_events, render_once, run_demo_loop, run_watch_loop
 from score.events import Event, Team, find_events, format_event, parse_espn_event
 from score.espn import ESPNClient
 from score.storage import FollowStore
@@ -119,6 +119,27 @@ class CLITests(unittest.TestCase):
         self.assertEqual(title, "ARS 0–2 MCI · 73′")
         self.assertEqual(stream.value, osc_title(title))
 
+
+    def test_demo_writes_sequence_and_restores_title(self):
+        class Stream:
+            def __init__(self): self.value = ""
+            def write(self, value): self.value += value
+            def flush(self): pass
+        stream, stop = Stream(), threading.Event()
+        titles = ["ARS 0–0 MCI · 72′", "ARS 0–1 MCI · 73′", "ARS 1–1 MCI · FT"]
+        run_demo_loop(stream, "RESTORED", 0, stop, titles=titles)
+        expected = "".join(osc_title(title) for title in titles) + osc_title("RESTORED")
+        self.assertEqual(stream.value, expected)
+
+    def test_demo_can_be_unpinned_before_sequence_finishes(self):
+        class Stream:
+            def __init__(self): self.value = ""
+            def write(self, value): self.value += value
+            def flush(self): pass
+        stream, stop = Stream(), threading.Event()
+        stop.set()
+        run_demo_loop(stream, "RESTORED", 30, stop)
+        self.assertEqual(stream.value, osc_title("RESTORED"))
 
     def test_selector_shows_only_live_events_and_pins_exact_selection(self):
         live = parse_espn_event(LIVE_EVENT)

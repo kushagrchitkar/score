@@ -19,6 +19,13 @@ from .title import osc_title
 
 STATE_HOME = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) / "score"
 CONFIG_HOME = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "score"
+DEMO_TITLES = (
+    "ARS 0–0 MCI · 72′",
+    "ARS 0–1 MCI · 73′",
+    "ARS 1–1 MCI · 74′",
+    "ARS 1–2 MCI · 75′",
+    "ARS 2–2 MCI · FT",
+)
 
 
 def render_once(client, event_id: str, stream) -> str:
@@ -119,6 +126,48 @@ def watch(event_id: str, tty: str, restore: str, interval: int = 20):
         stream.close()
 
 
+def run_demo_loop(stream, restore: str, interval: int, stop_event, titles=DEMO_TITLES) -> None:
+    try:
+        for title in titles:
+            if stop_event.is_set():
+                break
+            _restore_title(stream, title)
+            if stop_event.wait(interval):
+                break
+    finally:
+        _restore_title(stream, restore)
+
+
+def demo_watch(tty: str, restore: str, interval: int = 2) -> None:
+    state_path = _state_path(tty)
+    stream = open(tty, "w", buffering=1)
+    stop_event = threading.Event()
+
+    def stop(_signum, _frame):
+        stop_event.set()
+
+    signal.signal(signal.SIGTERM, stop)
+    signal.signal(signal.SIGINT, stop)
+    try:
+        run_demo_loop(stream, restore, interval, stop_event)
+    finally:
+        state_path.unlink(missing_ok=True)
+        stream.close()
+
+
+def demo() -> None:
+    tty = _tty()
+    unpin(quiet=True)
+    restore = Path.cwd().name or "Ghostty"
+    process = subprocess.Popen(
+        [sys.executable, "-m", "score.cli", "_demo_watch", tty, restore],
+        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    _write_state(tty, {"pid": process.pid, "event_id": "demo", "title": DEMO_TITLES[0], "restore": restore})
+    print("Demo pinned. Watch the Ghostty title; use `score unpin` to stop it.")
+
+
 def pin_event(event, once=False):
     if once:
         print(format_event(event))
@@ -201,6 +250,7 @@ def parser():
     pin_parser.add_argument("query", nargs="+")
     pin_parser.add_argument("--once", action="store_true", help="print the match once without changing the title")
     sub.add_parser("unpin", help="stop watching this terminal")
+    sub.add_parser("demo", help="simulate a match in this terminal title")
     follow_parser = sub.add_parser("follow", help="follow a team")
     follow_parser.add_argument("query", nargs="+")
     sub.add_parser("following", help="list followed teams")
@@ -208,6 +258,9 @@ def parser():
     watch_parser.add_argument("event_id")
     watch_parser.add_argument("tty")
     watch_parser.add_argument("restore")
+    demo_watch_parser = sub.add_parser("_demo_watch")
+    demo_watch_parser.add_argument("tty")
+    demo_watch_parser.add_argument("restore")
     return result
 
 
@@ -219,12 +272,16 @@ def main(argv=None):
         pin(" ".join(args.query), args.once)
     elif args.command == "unpin":
         unpin()
+    elif args.command == "demo":
+        demo()
     elif args.command == "follow":
         follow(" ".join(args.query))
     elif args.command == "following":
         following()
     elif args.command == "_watch":
         watch(args.event_id, args.tty, args.restore)
+    elif args.command == "_demo_watch":
+        demo_watch(args.tty, args.restore)
 
 
 if __name__ == "__main__":
