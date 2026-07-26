@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ghostty-score"
+version = "0.1.0"
+description = "Pin minimal live sports scores to your terminal title"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+authors = [{name = "Kushagra Chitkara", email = "kushagrachitkara37@gmail.com"}]
+
+[project.scripts]
+score = "score.cli:main"
+
+[tool.setuptools]
+packages = ["score"]
